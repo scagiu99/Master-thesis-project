@@ -5,61 +5,62 @@ import torch
 from torch_geometric.utils import from_networkx
 import os
 import json
-import shutil
 import pickle
 import torch.nn.functional as F
 import networkx as nx
 
 #Label che voglio prendere in considerazione
-model_cat = ["Knife", "Bag", "Earphone", "Laptop", "Hat"]
+model_cat = ["Knife", "Bag", "Earphone"]
+num_samples = 2048
 
-def organize_dataset():
-    # Specifica il percorso della cartella principale
-    cartella_principale = "Data_sample"
-    # Specifica la destinazione dove copiare le cartelle filtrate
-    cartella_destinazione = "Data"
+# Rotazione point cloud
+def rotate_pointcloud_3d(pointcloud, normals):
+    # Genera angoli casuali
+    theta_x = np.pi * 2 * np.random.uniform()
+    theta_y = np.pi * 2 * np.random.uniform()
+    theta_z = np.pi * 2 * np.random.uniform()
 
-    # Crea la cartella di destinazione se non esiste
-    os.makedirs(cartella_destinazione, exist_ok=True)
+    # Matrici di rotazione per ciascun asse
+    Rx = np.array([[1, 0, 0],
+                   [0, np.cos(theta_x), -np.sin(theta_x)],
+                   [0, np.sin(theta_x), np.cos(theta_x)]])
+                   
+    Ry = np.array([[np.cos(theta_y), 0, np.sin(theta_y)],
+                   [0, 1, 0],
+                   [-np.sin(theta_y), 0, np.cos(theta_y)]])
+                   
+    Rz = np.array([[np.cos(theta_z), -np.sin(theta_z), 0],
+                   [np.sin(theta_z), np.cos(theta_z), 0],
+                   [0, 0, 1]])
 
-    # Itera su tutte le cartelle e sottocartelle nella cartella principale
-    for root, directories, files in os.walk(cartella_principale):
-            # Verifica se "meta.json" è presente nella cartella principale dell'oggetto
-            if "meta.json" in files and "point_sample" in directories:
-                percorso_meta = os.path.join(root, "meta.json")
-                
-                # Legge il file meta.json
-                with open(percorso_meta, 'r') as meta_file:
-                    meta_data = json.load(meta_file)
-                
-                # Verifica se il model_cat è tra quelli desiderati
-                if meta_data.get("model_cat") in model_cat:
-                    # Crea la cartella per l'oggetto nella cartella di destinazione
-                    nome_cartella_oggetto = os.path.basename(root)
-                    destinazione_oggetto = os.path.join(cartella_destinazione, nome_cartella_oggetto)
-                    os.makedirs(destinazione_oggetto, exist_ok=True)
-                    
-                    # Copia il file meta.json nella nuova cartella
-                    shutil.copy(percorso_meta, destinazione_oggetto)
-                    print(f"Copiato {percorso_meta} in {destinazione_oggetto}")
-                    
-                    # Cerca il file sample-points-all-pts-nor-rgba-10000.txt nella sottocartella point_sample
-                    percorso_point_sample = os.path.join(root, "point_sample")
-                    file_sample_points = "sample-points-all-pts-nor-rgba-10000.txt"
-                    percorso_sample = os.path.join(percorso_point_sample, file_sample_points)
-                    
-                    if os.path.exists(percorso_sample):
-                        shutil.copy(percorso_sample, destinazione_oggetto)
-                        print(f"Copiato {percorso_sample} in {destinazione_oggetto}")
+    # Composizione delle rotazioni
+    R = Rz.dot(Ry).dot(Rx)
+    
+    # Applica la rotazione alla point cloud
+    pointcloud = pointcloud.dot(R)
+    normals = normals.dot(R)
+    return pointcloud, normals
+
+# Traslazione point cloud
+def translate_pointcloud(pointcloud, translate_range=(-0.5, 0.5)):
+     # Applica traslazione casuale
+    translation_factors = np.random.uniform(low=translate_range[0], high=translate_range[1], size=[3])
+    
+    # Applica la traslazione alla point cloud
+    translated_pointcloud = pointcloud + translation_factors
+    return translated_pointcloud
 
 # Carica i dati
 def load_point_cloud(file_path):
-    return np.loadtxt(file_path)
+    points = np.loadtxt(file_path)
+    points[:, :3], points[:, 3:6] = rotate_pointcloud_3d(points[:, :3], points[:, 3:6])  # Normalizza le coordinate spaziali xyz e le normali
+    points[:, :3] = translate_pointcloud(points[:, :3]) # Traslo solo le coordinate spaziali xyz
+    return points
 
 # Funzione per il campionamento dei punti più lontani
 def farthest_point_sampling(points, num_samples):
     N, D = points.shape
-    centroids = np.zeros((num_samples,))
+    centroids = np.zeros((num_samples,), dtype=int)
     distances = np.ones((N,)) * 1e10
     farthest = np.random.randint(0, N)
     
@@ -67,83 +68,94 @@ def farthest_point_sampling(points, num_samples):
         centroids[i] = farthest
         centroid = points[farthest, :]
         dist = np.sum((points - centroid) ** 2, axis=1)
-        mask = dist < distances
-        distances[mask] = dist[mask]
+        # Aggiorna le distanze minime
+        distances = np.minimum(distances, dist)
         farthest = np.argmax(distances)
         
     sampled_points = points[centroids.astype(int)]
-    return sampled_points
+    return sampled_points, centroids
 
 # Funzione per creare patch locali attorno ai punti campionati
-def create_local_patches(points, sampled_points, k=30):
-    nbrs = NearestNeighbors(n_neighbors=k, algorithm='auto').fit(points)
+def create_local_patches(points, normals, sampled_points, k=30):
+    nbrs = NearestNeighbors(n_neighbors=k, algorithm='kd_tree', n_jobs=-1).fit(points)
     _, indices = nbrs.kneighbors(sampled_points)
-    patches = [points[idx] for idx in indices]
-    return patches
+    patches_points = points[indices]
+    patches_normals = normals[indices]
+    return patches_points, patches_normals
 
 # Funzione per calcolare il FPFH su una point cloud Open3D
 def compute_fpfh(point_cloud, voxel_size=0.05):
+    # Definisci i raggi per la stima delle normali e il calcolo delle feature
     radius_normal = voxel_size * 2
     radius_feature = voxel_size * 5
-    
-    # Stima delle normali (se non presenti)
+
+    # Controlla se la point cloud ha normali; se non le ha, stima le normali
     if not point_cloud.has_normals():
         point_cloud.estimate_normals(
             search_param=o3d.geometry.KDTreeSearchParamHybrid(
                 radius=radius_normal, max_nn=30))
-    
+
     # Calcolo del FPFH
     fpfh = o3d.pipelines.registration.compute_fpfh_feature(
         point_cloud,
         o3d.geometry.KDTreeSearchParamHybrid(
             radius=radius_feature, max_nn=100))
-    
-    return fpfh
+
+    return np.array(fpfh.data).T
 
 # Converte ogni patch in una point cloud di Open3D e calcola il FPFH
-def process_patches(patches):
+def process_patches(patches_points, patches_normals):
     fpfh_descriptors = []
-    for patch in patches:
+    
+    for patch_points, patch_normals in zip(patches_points, patches_normals):
         # Crea un oggetto PointCloud per ogni patch
         patch_point_cloud = o3d.geometry.PointCloud()
-        patch_point_cloud.points = o3d.utility.Vector3dVector(patch)
-        
+        patch_point_cloud.points = o3d.utility.Vector3dVector(patch_points[:, :3])  # Usa solo le coordinate xyz
+
+        # Aggiungi normali alla point cloud
+        patch_point_cloud.normals = o3d.utility.Vector3dVector(patch_normals)
+
         # Calcola il FPFH per la patch corrente
         fpfh = compute_fpfh(patch_point_cloud)
         
-        # Converte FPFH in un array numpy e aggiungilo alla lista dei descriptor
-        fpfh_numpy = np.array(fpfh.data).T  # Trasponi per ottenere (N_points, N_features)
-        fpfh_descriptors.append(fpfh_numpy)
+        # Aggiungi i descriptor FPFH alla lista
+        fpfh_descriptors.append(fpfh[0]) # Prendi solo il descrittore del punto centrale della patch
     
     # Concatena tutti i descriptor FPFH in un singolo array numpy
     fpfh_all_patches = np.vstack(fpfh_descriptors)
     return fpfh_all_patches
 
 # Funzione per costruire un grafo dai punti
-def build_graph(points, fpfh_descriptors, radius):
+def build_graph(points, normals, colors, fpfh_descriptors, k):
     G = nx.Graph()
     
-    # Aggiunge i nodi al grafo con le feature FPFH
-    for i, (point, fpfh) in enumerate(zip(points, fpfh_descriptors)):
-        # Aggiunge il nodo con la feature FPFH
-        G.add_node(i, x=point, fpfh=fpfh)
-    
-    # Aggiunge gli archi basati sulla distanza tra i punti
-    for i in range(len(points)):
-        for j in range(i + 1, len(points)):
-            dist = np.linalg.norm(points[i] - points[j])
-            if dist < radius:
-                G.add_edge(i, j, weight=dist)  
-    
-    return G
+    # Concatenate diverse feature (coordinate, normali, colore, FPFH)
+    node_features = np.concatenate((points, normals, colors, fpfh_descriptors), axis=1)
 
+    # Aggiunge i nodi al grafo con le feature concatenate
+    for i in range(len(points)):
+        G.add_node(i, x=node_features[i])
+    
+    # Usa NearestNeighbors per trovare i k-nearest neighbors per ogni punto
+    nbrs = NearestNeighbors(n_neighbors=k + 1, algorithm='auto').fit(points)  # k+1 perché il punto stesso è incluso
+    distances, indices = nbrs.kneighbors(points)
+
+    # Aggiungi archi per i k vicini più vicini di ogni punto
+    for i in range(len(points)):
+        for j in range(1, k + 1):  # Inizia da 1 per evitare di considerare il punto stesso come vicino
+            neighbor_idx = indices[i, j]
+            dist = distances[i, j]
+            G.add_edge(i, neighbor_idx, weight=dist)
+
+    return G
 
 # Funzione per creare il dataset
 def create_dataset(output_file):
     dataset = []
-
+    
     # Itero su tutte le cartelle nella cartella principale
-    for root, directories, files in os.walk("Data"):
+    for root, directories, files in os.walk("sample"):
+
         if "sample-points-all-pts-nor-rgba-10000.txt" in files:
             percorso_file = os.path.join(root, "sample-points-all-pts-nor-rgba-10000.txt")
             
@@ -160,24 +172,34 @@ def create_dataset(output_file):
             
             label = model_cat.index(model_cat_value)  # Ottieni l'indice della categoria
 
-            print(f"Utilizzando il file: {percorso_file} con etichetta {label} ({model_cat_value})")
+            print(f"File: {percorso_file} con etichetta {label} ({model_cat_value})")
             point_cloud_data = load_point_cloud(percorso_file)
 
-            points = point_cloud_data[:, :3]  # Coordinate spaziali (x, y, z)
+            points = point_cloud_data[:, :3] # Coordinate spaziali (x, y, z)
+            normals = point_cloud_data[:, 3:6] # Coordinate normali (x, y, z)
+            colors = point_cloud_data[:, 6:9]  
         
             # Eseguo il campionamento di punti
             num_samples = 2048 # ho point cloud da 10mila punti quindi il campione va scelto tra 1000 e 5000 campioni, 
                                 #quindi questo valore per avere un valore medio che preservi i dettagli e bilanci la riduzione
-            sampled_points = farthest_point_sampling(points, num_samples)
+            sampled_points, indices = farthest_point_sampling(points, num_samples)
+
+            # Filtra le normali e i colori dei punti campionati
+            sampled_normals = normals[indices]
+            sampled_colors = colors[indices]
 
             # Creo patch locali attorno ai punti campionati
-            patches = create_local_patches(points, sampled_points, k=30)
+            patches_points, patches_normals = create_local_patches(points, normals, sampled_points, k=30)
 
             # Calcolo il FPFH per ciascuna patch
-            fpfh_descriptors = process_patches(patches)
+            fpfh_descriptors = process_patches(patches_points, patches_normals)
+            #print(fpfh_descriptors)
 
+            #optimal_radius = find_optimal_radius(sampled_points)
+
+            k = 20
             # Costruisco il grafo a partire dai punti campionati
-            graph = build_graph(sampled_points, fpfh_descriptors, radius=0.1)
+            graph = build_graph(sampled_points, sampled_normals, sampled_colors, fpfh_descriptors, k=k)
             
             # Converto il grafo in torch_geometric
             graph_torch_geometric = from_networkx(graph)
@@ -188,8 +210,9 @@ def create_dataset(output_file):
             # Assegna l'etichetta one-hot al grafo
             graph_torch_geometric.y = y_one_hot
             #print(graph_torch_geometric.y)
-            # Assegna le coordinate spaziali campionate a x
-            graph_torch_geometric.x = torch.tensor(fpfh_descriptors, dtype=torch.float32)
+           
+            # Assegna le feature dei nodi
+            graph_torch_geometric.x = torch.tensor(np.concatenate((sampled_normals, sampled_colors, fpfh_descriptors), axis=1), dtype=torch.float32)
             #print(graph_torch_geometric.x)
             
             # Aggiungo il grafo al dataset
