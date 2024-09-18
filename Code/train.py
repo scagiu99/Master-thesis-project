@@ -1,13 +1,13 @@
 import numpy as np
-from torch_geometric.utils import from_networkx
 import torch
+import torch.nn as nn
 import os
-from torch_geometric.utils import erdos_renyi_graph
-from graph_classifier import *
 import pickle
 from tqdm import tqdm
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import f1_score, roc_auc_score, average_precision_score, accuracy_score, confusion_matrix
+from sklearn.preprocessing import label_binarize
+from graph_classifier import *
 from general_utils import *
 from pointcloud_to_graph import *
 
@@ -43,7 +43,8 @@ def stratified_cross_validation(dataset, n_splits=5, random_state=42):
 def train(train_loader, val_loader):
     model.train()
     total_loss = 0
-    criterion = FocalLoss()
+    total_samples = 0
+    criterion = nn.CrossEntropyLoss()
 
     all_preds = []
     all_labels = []
@@ -59,19 +60,28 @@ def train(train_loader, val_loader):
 
         loss.backward()
         optimizer.step()
-        total_loss += loss.item()
+        total_loss += loss.item() * batch_size
+        total_samples += batch_size
+        
+        print(len(train_loader.dataset))
 
         all_preds.append(out.detach().cpu().numpy())
-        all_labels.append(y.detach().cpu().numpy())
+        all_labels.append(y.cpu().numpy())
 
     all_preds = np.concatenate(all_preds)
     all_labels = np.concatenate(all_labels)
     
     acc = accuracy_score(np.argmax(all_labels, axis=1), np.argmax(all_preds, axis=1))
     f1 = f1_score(np.argmax(all_labels, axis=1), np.argmax(all_preds, axis=1), average='weighted')
-    auroc = roc_auc_score(all_labels, all_preds, multi_class='ovr')
-    auprc = average_precision_score(all_labels, all_preds, average='weighted')
-    loss = total_loss / len(train_loader.dataset)
+
+    # Apply softmax to convert logits to probabilities for AUROC and AUPRC
+    all_preds_prob = torch.softmax(torch.tensor(all_preds), dim=1).numpy()
+
+    # Calculate AUROC and AUPRC
+    auroc = roc_auc_score(label_binarize(all_labels, classes=np.arange(all_preds_prob.shape[1])), all_preds_prob, multi_class='ovr')
+    auprc = average_precision_score(label_binarize(all_labels, classes=np.arange(all_preds_prob.shape[1])), all_preds_prob, average='weighted')
+
+    loss = total_loss / total_samples
 
     val_loss, val_f1, val_auroc, val_auprc, val_acc, _ = test(val_loader)
 
@@ -82,8 +92,9 @@ def train(train_loader, val_loader):
 @torch.no_grad()
 def test(test_loader):
     model.eval()
-    criterion = FocalLoss()
+    criterion = nn.CrossEntropyLoss()
     total_loss = 0
+    total_samples = 0
     all_preds = []
     all_labels = []
     for data in test_loader:
@@ -94,19 +105,26 @@ def test(test_loader):
         out = model(x, edge_index, batch, batch_size)
         
         loss = criterion(out, y)
-        total_loss += loss.item()
+        total_loss += loss.item() * batch_size
+        total_samples += batch_size
         
         all_preds.append(out.detach().cpu().numpy())
-        all_labels.append(y.detach().cpu().numpy())
+        all_labels.append(y.cpu().numpy())
 
     all_preds = np.concatenate(all_preds)
     all_labels = np.concatenate(all_labels)
     
     acc = accuracy_score(np.argmax(all_labels, axis=1), np.argmax(all_preds, axis=1))
     f1 = f1_score(np.argmax(all_labels, axis=1), np.argmax(all_preds, axis=1), average='weighted')
-    auroc = roc_auc_score(all_labels, all_preds, multi_class='ovr')
-    auprc = average_precision_score(all_labels, all_preds, average='weighted')
-    loss = total_loss / len(test_loader.dataset)
+
+    # Apply softmax to convert logits to probabilities for AUROC and AUPRC
+    all_preds_prob = torch.softmax(torch.tensor(all_preds), dim=1).numpy()
+
+    # Calculate AUROC and AUPRC
+    auroc = roc_auc_score(label_binarize(all_labels, classes=np.arange(all_preds_prob.shape[1])), all_preds_prob, multi_class='ovr')
+    auprc = average_precision_score(label_binarize(all_labels, classes=np.arange(all_preds_prob.shape[1])), all_preds_prob, average='weighted')
+
+    loss = total_loss / total_samples
     cm = confusion_matrix(np.argmax(all_labels, axis=1), np.argmax(all_preds, axis=1))
 
     return loss, f1, auroc, auprc, acc, cm
@@ -124,7 +142,7 @@ if os.path.exists(file_path): # Se il dataset è già memorizzato caricalo da pi
     with open(file_path, 'rb') as file:
         dataset = pickle.load(file)
 else:
-    organize_dataset()
+    #organize_dataset()
     dataset = create_dataset(file_path)
 
 # Dataset Labels Summary
@@ -135,18 +153,21 @@ train_loaders, val_loaders, test_loaders = stratified_cross_validation(dataset=d
 
 # Creao un modello GNN
 num_features = dataset[0].num_node_features
+print("Numero di feature: ",num_features)
 num_classes = len(model_cat)
-models = [ M1(num_features=num_features, hidden_channels=64, num_classes=num_classes),
+models = [ M1(num_features=num_features, hidden_channels=64, num_classes=num_classes), 
            M2(num_features=num_features, hidden_channels=64, num_classes=num_classes), 
-           M3(num_features=num_features, hidden_channels=64, num_classes=num_classes) ]
-
+           M3(num_features=num_features, hidden_channels=64, num_classes=num_classes),
+           GAT(num_features=num_features, hidden_channels=64, num_classes=num_classes),
+           GAT2(num_features=num_features, hidden_channels=64, num_classes=num_classes),
+           GAT3(num_features=num_features, hidden_channels=64, num_classes=num_classes)]
 
 
 for model in models:
 
     model.to(device=device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-    num_epochs = 2000
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
+    num_epochs = 250
 
     # Inizializzo la somma cumulativa delle matrici di confusione
     cumulative_confusion_matrix = np.zeros((num_classes, num_classes))
