@@ -8,13 +8,14 @@ import json
 import pickle
 import torch.nn.functional as F
 import networkx as nx
+from sklearn.decomposition import PCA
 
 #Label che voglio prendere in considerazione
-model_cat = ["Knife", "Bag", "Earphone"]
-num_samples = 2048
+model_cat = ["Vase","Lamp", "Knife", "Bottle", "Laptop", "Faucet", "Chair", "Table"]
+num_samples = 512
 
 # Rotazione point cloud
-def rotate_pointcloud_3d(pointcloud, normals):
+def rotate_pointcloud_3d(pointcloud):
     # Genera angoli casuali
     theta_x = np.pi * 2 * np.random.uniform()
     theta_y = np.pi * 2 * np.random.uniform()
@@ -35,11 +36,9 @@ def rotate_pointcloud_3d(pointcloud, normals):
 
     # Composizione delle rotazioni
     R = Rz.dot(Ry).dot(Rx)
-    
     # Applica la rotazione alla point cloud
     pointcloud = pointcloud.dot(R)
-    normals = normals.dot(R)
-    return pointcloud, normals
+    return pointcloud
 
 # Traslazione point cloud
 def translate_pointcloud(pointcloud, translate_range=(-0.5, 0.5)):
@@ -50,11 +49,45 @@ def translate_pointcloud(pointcloud, translate_range=(-0.5, 0.5)):
     translated_pointcloud = pointcloud + translation_factors
     return translated_pointcloud
 
+def data_augmentation(pointcloud):
+    # Rotazione casuale
+    point_cloud_rotated = rotate_pointcloud_3d(pointcloud)
+    
+    # Traslazione casuale
+    augmentated_pointcloud = translate_pointcloud(point_cloud_rotated)
+
+    return augmentated_pointcloud
+
+def translate_to_origin(point_cloud):
+    # Calcola il centroide
+    centroid = np.mean(point_cloud, axis=0)
+    
+    # Sottrai il centroide da ogni punto
+    point_cloud_centered = point_cloud - centroid
+    
+    return point_cloud_centered
+
+# PCA
+def apply_pca(point_cloud):
+    pca = PCA()
+    point_cloud_pca = pca.fit_transform(point_cloud)
+    return point_cloud_pca
+
+# Normalizzazione
+def normalize_point_cloud(point_cloud):
+    # Traslazione verso l'origine
+    point_cloud_centered = translate_to_origin(point_cloud)
+    
+    # Applicazione della PCA
+    point_cloud_normalized = apply_pca(point_cloud_centered)
+    
+    return point_cloud_normalized
+
 # Carica i dati
 def load_point_cloud(file_path):
     points = np.loadtxt(file_path)
-    points[:, :3], points[:, 3:6] = rotate_pointcloud_3d(points[:, :3], points[:, 3:6])  # Normalizza le coordinate spaziali xyz e le normali
-    points[:, :3] = translate_pointcloud(points[:, :3]) # Traslo solo le coordinate spaziali xyz
+   # points[:, :3] = data_augmentation(points[:, :3])  # Data Augmentation
+   # points[:, :3] = normalize_point_cloud(points[:, :3]) # Normalizzo
     return points
 
 # Funzione per il campionamento dei punti più lontani
@@ -180,8 +213,8 @@ def create_dataset(output_file):
             colors = point_cloud_data[:, 6:9]  
         
             # Eseguo il campionamento di punti
-            num_samples = 2048 # ho point cloud da 10mila punti quindi il campione va scelto tra 1000 e 5000 campioni, 
-                                #quindi questo valore per avere un valore medio che preservi i dettagli e bilanci la riduzione
+            # ho point cloud da 10mila punti quindi il campione va scelto tra 1000 e 5000 campioni, 
+            #quindi questo valore per avere un valore medio che preservi i dettagli e bilanci la riduzione
             sampled_points, indices = farthest_point_sampling(points, num_samples)
 
             # Filtra le normali e i colori dei punti campionati
@@ -195,9 +228,7 @@ def create_dataset(output_file):
             fpfh_descriptors = process_patches(patches_points, patches_normals)
             #print(fpfh_descriptors)
 
-            #optimal_radius = find_optimal_radius(sampled_points)
-
-            k = 20
+            k = 10
             # Costruisco il grafo a partire dai punti campionati
             graph = build_graph(sampled_points, sampled_normals, sampled_colors, fpfh_descriptors, k=k)
             

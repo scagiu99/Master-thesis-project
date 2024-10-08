@@ -5,8 +5,10 @@ import os
 import pickle
 from tqdm import tqdm
 from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.metrics import f1_score, roc_auc_score, average_precision_score, accuracy_score, confusion_matrix, classification_report
+from sklearn.metrics import f1_score, roc_auc_score, average_precision_score, accuracy_score, confusion_matrix
 from sklearn.preprocessing import label_binarize
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
+from sklearn.metrics import classification_report
 from graph_classifier import *
 from general_utils import *
 from pointcloud_to_graph import *
@@ -121,14 +123,13 @@ def test(test_loader):
 
     loss = total_loss / len(test_loader.dataset)
     cm = confusion_matrix(all_labels, np.argmax(all_preds, axis=1))
-    cr = classification_report(all_labels, np.argmax(all_preds, axis=1))
 
-    return loss, f1, auroc, auprc, acc, cm, cr
+    return loss, f1, auroc, auprc, acc, cm
 
 
 #################################################################
 
-file_path = 'graph_dataset.pkl'
+file_path = 'graph_dataset_2048.pkl'
 sbj_number = 0
 
 print('Loading dataset...')
@@ -151,15 +152,9 @@ num_features = dataset[0].num_node_features
 print("Numero di feature: ",num_features)
 num_classes = len(model_cat)
 
-models = [ v1M1(num_features=num_features, num_classes=num_classes),
-            M1(num_features=num_features, num_classes=num_classes), 
-            oldM1(num_features=num_features, hidden_channels=64, num_classes=num_classes),
-            M3(num_features=num_features, num_classes=num_classes),
-            oldM3(num_features=num_features, hidden_channels=64, num_classes=num_classes),
-            v1M3(num_features=num_features, num_classes=num_classes),
-            GAT(num_features=num_features, hidden_channels=64, num_classes=num_classes),
-            GAT2(num_features=num_features, hidden_channels=64, num_classes=num_classes)]
-
+models = [ M1(num_features=num_features, num_classes=num_classes),
+            M2(num_features=num_features, hidden_channels=64, num_classes=num_classes),
+            M3(num_features=num_features, num_classes=num_classes)] 
 
 for model in models:
 
@@ -188,7 +183,7 @@ for model in models:
         print(f"Fold {fold + 1}/{n_splits}")
         for epoch in tqdm(range(1, num_epochs + 1)):
             train_loss, train_f1, train_auroc, train_auprc, train_acc, val_loss, val_f1, val_auroc, val_auprc, val_acc = train(train_loader, val_loader)
-            test_loss, test_f1, test_auroc, test_auprc, test_acc, test_confusion_matrix, test_classification_report  = test(test_loader)
+            test_loss, test_f1, test_auroc, test_auprc, test_acc, test_confusion_matrix  = test(test_loader)
             
            # scheduler.step()
 
@@ -224,7 +219,6 @@ for model in models:
         final_aurocs.append(fold_aurocs[-1])
         final_auprcs.append(fold_auprcs[-1])
         cumulative_confusion_matrix += test_confusion_matrix
-        classification_report += test_classification_report
 
     # Plotting delle metriche per tutti i modelli
     print_cv_summary( final_losses, final_accuracies, final_f1s, final_aurocs, final_auprcs, model.__class__.__name__ )
