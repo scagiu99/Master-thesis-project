@@ -7,46 +7,61 @@ import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-model_cat = ["Knife", "Bag", "Earphone"]
+#model_cat = ["Knife", "Bag", "Earphone"]
+model_cat = ["Vase", "Lamp",  "Knife", "Bottle", "Laptop", "Faucet", "Chair", "Table"]
+max_elements_per_category = 500
 
 def organize_dataset():
     # Specifica il percorso della cartella principale
-    cartella_principale = "Data_sample"
+    cartella_principale = "/mnt/43fba879-48e4-4e4c-afb2-dcb7e861c868/sftp/datasets/ShapeNet/data_v0"
     # Specifica la destinazione dove copiare le cartelle filtrate
     cartella_destinazione = "sample"
 
     # Crea la cartella di destinazione se non esiste
     os.makedirs(cartella_destinazione, exist_ok=True)
 
+    # Inizializza un dizionario per contare gli elementi copiati per ogni categoria
+    category_counter = {cat: 0 for cat in model_cat}
+
     # Itera su tutte le cartelle e sottocartelle nella cartella principale
     for root, directories, files in os.walk(cartella_principale):
-            # Verifica se "meta.json" è presente nella cartella principale dell'oggetto
-            if "meta.json" in files and "point_sample" in directories:
-                percorso_meta = os.path.join(root, "meta.json")
-                
-                # Legge il file meta.json
-                with open(percorso_meta, 'r') as meta_file:
-                    meta_data = json.load(meta_file)
-                
-                # Verifica se il model_cat è tra quelli desiderati
-                if meta_data.get("model_cat") in model_cat:
-                    # Crea la cartella per l'oggetto nella cartella di destinazione
-                    nome_cartella_oggetto = os.path.basename(root)
-                    destinazione_oggetto = os.path.join(cartella_destinazione, nome_cartella_oggetto)
-                    os.makedirs(destinazione_oggetto, exist_ok=True)
-                    
-                    # Copia il file meta.json nella nuova cartella
-                    shutil.copy(percorso_meta, destinazione_oggetto)
-                    print(f"Copiato {percorso_meta} in {destinazione_oggetto}")
-                    
-                    # Cerca il file sample-points-all-pts-nor-rgba-10000.txt nella sottocartella point_sample
-                    percorso_point_sample = os.path.join(root, "point_sample")
-                    file_sample_points = "sample-points-all-pts-nor-rgba-10000.txt"
-                    percorso_sample = os.path.join(percorso_point_sample, file_sample_points)
-                    
-                    if os.path.exists(percorso_sample):
-                        shutil.copy(percorso_sample, destinazione_oggetto)
-                        print(f"Copiato {percorso_sample} in {destinazione_oggetto}")
+        # Verifica se "meta.json" è presente nella cartella principale dell'oggetto
+        if "meta.json" in files and "point_sample" in directories:
+            percorso_meta = os.path.join(root, "meta.json")
+
+            # Legge il file meta.json
+            with open(percorso_meta, 'r') as meta_file:
+                meta_data = json.load(meta_file)
+
+            # Verifica se il model_cat è tra quelli desiderati
+            category = meta_data.get("model_cat")
+            if category in model_cat:
+                # Controlla se la categoria ha già raggiunto il limite massimo
+                if category_counter[category] >= max_elements_per_category:
+                    print(f"Limite di {max_elements_per_category} elementi raggiunto per la categoria {category}.")
+                    continue
+
+                # Crea la cartella per l'oggetto nella cartella di destinazione
+                nome_cartella_oggetto = os.path.basename(root)
+                destinazione_oggetto = os.path.join(cartella_destinazione, nome_cartella_oggetto)
+                os.makedirs(destinazione_oggetto, exist_ok=True)
+
+                # Copia il file meta.json nella nuova cartella
+                shutil.copy(percorso_meta, destinazione_oggetto)
+                print(f"Copiato {percorso_meta} in {destinazione_oggetto}")
+
+                # Cerca il file sample-points-all-pts-nor-rgba-10000.txt nella sottocartella point_sample
+                percorso_point_sample = os.path.join(root, "point_sample")
+                file_sample_points = "sample-points-all-pts-nor-rgba-10000.txt"
+                percorso_sample = os.path.join(percorso_point_sample, file_sample_points)
+
+                if os.path.exists(percorso_sample):
+                    shutil.copy(percorso_sample, destinazione_oggetto)
+                    print(f"Copiato {percorso_sample} in {destinazione_oggetto}")
+
+                # Incrementa il contatore per la categoria corrente
+                category_counter[category] += 1
+                print(f"Categoria {category}: {category_counter[category]} elementi copiati finora.")
 
 
 def print_dataset_summary(dataset):
