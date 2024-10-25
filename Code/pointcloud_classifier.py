@@ -52,9 +52,9 @@ def get_graph_feature(x, k=20, idx=None, dim9=False):
             idx = knn(x, k=k)   # (batch_size, num_points, k)
         else:
             idx = knn(x[:, 6:], k=k)
-    #device = torch.device('cuda')
+    device = torch.device('cuda')
 
-    idx_base = torch.arange(0, batch_size).view(-1, 1, 1)*num_points
+    idx_base = torch.arange(0, batch_size,device=device).view(-1, 1, 1)*num_points
 
     idx = idx + idx_base
 
@@ -75,7 +75,7 @@ def get_graph_feature(x, k=20, idx=None, dim9=False):
 class DGCNN(nn.Module):
     def __init__(self, embedding_dimension, num_classes):
         super(DGCNN, self).__init__()
-        self.k = 20
+        self.k = 10
         
         self.bn1 = nn.BatchNorm2d(64)
         self.bn2 = nn.BatchNorm2d(64)

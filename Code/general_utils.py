@@ -113,6 +113,57 @@ def plot_fold_metrics(metrics, fold, model):
     # Salvo l'immagine
     plt.savefig(f"./plots/model_{model}fold{fold+1}_metrics.png")
 
+def plot_final_curve(losses, accuracies, f1s, aurocs, auprcs, model):
+    metrics = [
+        (losses, 'Loss'),
+        (accuracies, 'Accuracy'),
+        (f1s, 'F1-score'),
+        (aurocs, 'AUROC'),
+        (auprcs, 'AUPRC')
+    ]
+    
+    num_metrics = len(metrics)
+    num_rows = num_metrics // 2 + num_metrics % 2
+    fig, axs = plt.subplots(num_rows, 2, figsize=(16, 9 * num_rows))
+    
+    for i, (metric_values, metric_name) in enumerate(metrics):
+        row = i // 2
+        col = i % 2
+        ax = axs[row, col]
+
+        # Estrai i valori finali per ogni fold (training, validation, test)
+        train_values = [fold[0] for fold in metric_values]
+        val_values = [fold[1] for fold in metric_values]
+        test_values = [fold[2] for fold in metric_values]
+
+        # Plotta le curve
+        ax.plot(range(1, len(train_values) + 1), train_values, label='Training', marker='o')
+        ax.plot(range(1, len(val_values) + 1), val_values, label='Validation', marker='o')
+        ax.plot(range(1, len(test_values) + 1), test_values, label='Test', marker='o')
+
+        ax.set_xlabel('Fold', fontsize=20)
+        ax.set_ylabel(metric_name, fontsize=20)
+        ax.set_title(f'{metric_name} over Folds', fontsize=24)
+        ax.legend(fontsize=14)
+
+    if num_metrics % 2 != 0:  # Se c'è un numero dispari di metriche, nasconde l'ultimo subplot
+        axs[-1, -1].axis('off')
+
+    plt.suptitle(f'Final Metrics Folds for Model {model}', fontsize=30, y=1.02)
+    plt.tight_layout()
+
+    # Margini aggiuntivi per evitare sovrapposizioni
+    plt.subplots_adjust(top=0.88, bottom=0.1, left=0.07, right=0.93, hspace=0.4, wspace=0.3)
+
+    # Check della directory 'plots'
+    os.makedirs('./plots', exist_ok=True)
+
+    # Salva il plot
+    plt.savefig(f"./plots/final_model_{model}_fold_curves.png")
+    plt.show()
+
+
+
 def print_cv_summary(losses, accuracies, f1s, aurocs, auprcs, model_name):
     
     def print_metric_summary(metric_name, data):

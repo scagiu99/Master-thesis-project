@@ -5,10 +5,8 @@ import os
 import pickle
 from tqdm import tqdm
 from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.metrics import f1_score, roc_auc_score, average_precision_score, accuracy_score, confusion_matrix
+from sklearn.metrics import f1_score, roc_auc_score, average_precision_score, accuracy_score, confusion_matrix, classification_report
 from sklearn.preprocessing import label_binarize
-from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
-from sklearn.metrics import classification_report
 from graph_classifier import *
 from general_utils import *
 from pointcloud_to_graph import *
@@ -129,7 +127,7 @@ def test(test_loader):
 
 #################################################################
 
-file_path = 'graph_dataset_2048.pkl'
+file_path = 'graph_dataset_1024.pkl'
 sbj_number = 0
 
 print('Loading dataset...')
@@ -162,18 +160,16 @@ for model in models:
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
     num_epochs = 250
 
-    #scheduler = CosineAnnealingLR(optimizer, T_max=50, eta_min=1e-4)
-
     # Inizializzo la somma cumulativa delle matrici di confusione
     cumulative_confusion_matrix = np.zeros((num_classes, num_classes))
     final_losses, final_accuracies, final_f1s, final_aurocs, final_auprcs = [], [], [], [], []
 
-    all_true_labels = []
-    all_pred_labels = []
 
     for fold, (train_loader, val_loader, test_loader) in enumerate(zip(train_loaders, val_loaders, test_loaders)):
         
         fold_losses, fold_accuracies, fold_f1s, fold_aurocs, fold_auprcs = [], [], [], [], []
+        total_labels = []
+        total_preds = []
 
         # Early stopping parameters
         best_val_loss = float('inf')
@@ -183,9 +179,8 @@ for model in models:
         print(f"Fold {fold + 1}/{n_splits}")
         for epoch in tqdm(range(1, num_epochs + 1)):
             train_loss, train_f1, train_auroc, train_auprc, train_acc, val_loss, val_f1, val_auroc, val_auprc, val_acc = train(train_loader, val_loader)
-            test_loss, test_f1, test_auroc, test_auprc, test_acc, test_confusion_matrix  = test(test_loader)
+            test_loss, test_f1, test_auroc, test_auprc, test_acc, test_confusion_matrix = test(test_loader)
             
-           # scheduler.step()
 
             print(f"""\nEpoch: {epoch:03d}, Train Loss: {train_loss:.4f}, Validation Loss: {val_loss:.4f}, Test Loss: {test_loss:.4f},
                     Train Accuracy: {train_acc:.4f}, Validation Accuracy: {val_acc:.4f}, Test Accuracy: {test_acc:.4f}, 
@@ -209,7 +204,7 @@ for model in models:
             fold_auprcs.append((train_auprc, val_auprc, test_auprc))
 
             fold_metrics = [ (fold_losses, 'Loss'), (fold_accuracies, 'Accuracy'), (fold_f1s, 'F1-score'), (fold_aurocs, 'AUROC'), (fold_auprcs, 'AUPRC') ]
-
+            
         plot_fold_metrics( fold_metrics, fold, model.__class__.__name__ )
 
         # Memorizzo le ultime metriche calcolate
@@ -218,7 +213,11 @@ for model in models:
         final_f1s.append(fold_f1s[-1])
         final_aurocs.append(fold_aurocs[-1])
         final_auprcs.append(fold_auprcs[-1])
+
         cumulative_confusion_matrix += test_confusion_matrix
+
+   # Alla fine del ciclo su tutti i fold, plotta i risultati
+    plot_final_curve(final_losses, final_accuracies, final_f1s, final_aurocs, final_auprcs, model.__class__.__name__)
 
     # Plotting delle metriche per tutti i modelli
     print_cv_summary( final_losses, final_accuracies, final_f1s, final_aurocs, final_auprcs, model.__class__.__name__ )

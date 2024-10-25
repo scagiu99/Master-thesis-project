@@ -44,7 +44,6 @@ def stratified_cross_validation(dataset, n_splits=5, random_state=42):
 def train(model, train_loader, val_loader, optimizer, criterion, device):
     model.train()
     total_loss = 0
-    count = 0
     all_preds = []
     all_labels = []
 
@@ -56,8 +55,7 @@ def train(model, train_loader, val_loader, optimizer, criterion, device):
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-        count += batch_size
-        total_loss += loss.item() * batch_size
+        total_loss += loss.item()
 
         all_preds.append(outputs.detach().cpu().numpy())
         all_labels.append(labels.cpu().numpy())
@@ -73,7 +71,7 @@ def train(model, train_loader, val_loader, optimizer, criterion, device):
     
     auroc = roc_auc_score(all_labels_one_hot, all_preds, multi_class='ovr')
     auprc = average_precision_score(all_labels_one_hot, all_preds, average='weighted')
-    loss = total_loss / count
+    loss = total_loss / len(train_loader.dataset)
 
     val_loss, val_f1, val_auroc, val_auprc, val_acc, _ = test(model, val_loader, criterion, device)
 
@@ -83,7 +81,6 @@ def train(model, train_loader, val_loader, optimizer, criterion, device):
 def test(model, test_loader, criterion, device):
     model.eval()
     total_loss = 0
-    count = 0
     all_preds = []
     all_labels = []
     
@@ -92,8 +89,7 @@ def test(model, test_loader, criterion, device):
         outputs = model(points)
         loss = criterion(outputs, labels)
         batch_size = points.size()[0]
-        count += batch_size
-        total_loss += loss.item() * batch_size
+        total_loss += loss.item()
 
         all_preds.append(outputs.detach().cpu().numpy())
         all_labels.append(labels.cpu().numpy())
@@ -109,7 +105,7 @@ def test(model, test_loader, criterion, device):
     
     auroc = roc_auc_score(all_labels_one_hot, all_preds, multi_class='ovr')
     auprc = average_precision_score(all_labels_one_hot, all_preds, average='weighted')
-    loss = total_loss / count
+    loss = total_loss / len(test_loader.dataset)
     cm = confusion_matrix(all_labels, np.argmax(all_preds, axis=1))
 
     return loss, f1, auroc, auprc, acc, cm
@@ -180,6 +176,9 @@ for model in models:
         final_aurocs.append(fold_aurocs[-1])
         final_auprcs.append(fold_auprcs[-1])
         cumulative_confusion_matrix += test_confusion_matrix
+
+    # Alla fine del ciclo su tutti i fold, plotta i risultati
+    plot_final_curve(final_losses, final_accuracies, final_f1s, final_aurocs, final_auprcs, model.__class__.__name__)
 
     print_cv_summary(final_losses, final_accuracies, final_f1s, final_aurocs, final_auprcs, model.__class__.__name__)
     print_confusion_matrix(cumulative_confusion_matrix, model.__class__.__name__, model_cat)

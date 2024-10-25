@@ -6,51 +6,44 @@ import os
 import json
 
 #Label che voglio prendere in considerazione
-model_cat = ["Knife", "Bag", "Earphone"]
+model_cat = ["Vase", "Lamp","Knife", "Bottle", "Laptop","Faucet", "Chair", "Table"]
 num_samples = 1024
 
-# Rotazione point cloud
-def rotate_pointcloud_3d(pointcloud, normals):
-    # Genera angoli casuali
-    theta_x = np.pi * 2 * np.random.uniform()
-    theta_y = np.pi * 2 * np.random.uniform()
-    theta_z = np.pi * 2 * np.random.uniform()
 
-    # Matrici di rotazione per ciascun asse
-    Rx = np.array([[1, 0, 0],
-                   [0, np.cos(theta_x), -np.sin(theta_x)],
-                   [0, np.sin(theta_x), np.cos(theta_x)]])
-                   
-    Ry = np.array([[np.cos(theta_y), 0, np.sin(theta_y)],
-                   [0, 1, 0],
-                   [-np.sin(theta_y), 0, np.cos(theta_y)]])
-                   
-    Rz = np.array([[np.cos(theta_z), -np.sin(theta_z), 0],
-                   [np.sin(theta_z), np.cos(theta_z), 0],
-                   [0, 0, 1]])
-
-    # Composizione delle rotazioni
-    R = Rz.dot(Ry).dot(Rx)
+#Traslazione
+def translate_to_origin(point_cloud):
+    # Calcola il centroide
+    centroid = np.mean(point_cloud, axis=0)
     
-    # Applica la rotazione alla point cloud
-    pointcloud = pointcloud.dot(R)
-    normals = normals.dot(R)
-    return pointcloud, normals
-
-# Traslazione point cloud
-def translate_pointcloud(pointcloud, translate_range=(-0.5, 0.5)):
-     # Applica traslazione casuale
-    translation_factors = np.random.uniform(low=translate_range[0], high=translate_range[1], size=[3])
+    # Sottrai il centroide da ogni punto
+    point_cloud_centered = point_cloud - centroid
     
-    # Applica la traslazione alla point cloud
-    translated_pointcloud = pointcloud + translation_factors
-    return translated_pointcloud
+    return point_cloud_centered
+
+#Scalatura
+def scale_to_unit_sphere(point_cloud):
+    # Calcola la distanza massima (norma euclidea massima)
+    max_distance = np.max(np.linalg.norm(point_cloud, axis=1))
+    
+    # Scala tutti i punti in modo che la distanza massima sia 1
+    point_cloud_normalized = point_cloud / max_distance
+    
+    return point_cloud_normalized
+
+#Normalizzazione
+def normalize_point_cloud(point_cloud):
+    # Step 1: Traslazione verso l'origine
+    point_cloud_centered = translate_to_origin(point_cloud)
+    
+    # Step 2: Scalatura
+    point_cloud_normalized = scale_to_unit_sphere(point_cloud_centered)
+    
+    return point_cloud_normalized
 
 # Carica i dati
 def load_point_cloud(file_path):
     points = np.loadtxt(file_path)
-    points[:, :3], points[:, 3:6] = rotate_pointcloud_3d(points[:, :3], points[:, 3:6])  # Normalizza le coordinate spaziali xyz e le normali
-    points[:, :3] = translate_pointcloud(points[:, :3]) # Traslo solo le coordinate spaziali xyz
+    points[:, :3] = normalize_point_cloud(points[:, :3]) # Traslo solo le coordinate spaziali xyz
     return points
 
 # Funzione per il campionamento dei punti più lontani
